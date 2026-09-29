@@ -590,7 +590,27 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("ports", help="List MIDI ports")
     p.set_defaults(func=cmd_ports)
 
-    p = sub.add_parser("inspect", help="Read a program and show K8 settings")
+    p = sub.add_parser("map", help="Show all eight program knob records")
+    p.add_argument("--source", type=int, default=1, choices=range(0, 9))
+    add_port_args(p)
+    p.set_defaults(func=cmd_map)
+
+    p = sub.add_parser(
+        "calibrate",
+        help="Learn physical K1-K7 mapping and infer broken physical K8",
+    )
+    p.add_argument("--source", type=int, default=1, choices=range(1, 9))
+    p.add_argument(
+        "--seconds",
+        type=float,
+        default=2.5,
+        help="Movement window for each surviving knob (default: 2.5 seconds)",
+    )
+    p.add_argument("--output", default="mapping.json")
+    add_port_args(p)
+    p.set_defaults(func=cmd_calibrate)
+
+    p = sub.add_parser("inspect", help="Read a program and show program record 8 settings")
     p.add_argument("--source", type=int, default=1, choices=range(0, 9))
     add_port_args(p)
     p.set_defaults(func=cmd_inspect)
@@ -620,8 +640,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--seconds",
         type=float,
-        default=60.0,
-        help="Idle observation window for spontaneous K8 activity (default: 60 seconds)",
+        default=30.0,
+        help="Stress window while moving K1-K7 to provoke ghost K8 (default: 30 seconds)",
+    )
+    p.add_argument(
+        "--mapping",
+        default="mapping.json",
+        help="Calibration file used to resolve physical K8 (default: mapping.json)",
+    )
+    p.add_argument(
+        "--record",
+        type=int,
+        choices=range(1, 9),
+        help="Explicit program record for physical K8; bypasses mapping file",
     )
     add_port_args(p)
     p.set_defaults(func=cmd_probe)
