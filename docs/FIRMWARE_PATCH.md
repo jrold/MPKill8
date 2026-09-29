@@ -1,141 +1,71 @@
-# Firmware patch: physical K8 kill
+# Firmware patch status
 
-## Confirmed target
+## DO NOT FLASH THE FIRST MPKill8 BUILD
 
-The user's physical MPK Mini MK3 enumerates as:
+The first hardware test failed.
 
-- USB VID: `0x09e8`
-- USB PID: `0x1049`
+Observed on the real PID `0x1049` MPK Mini MK3:
 
-That selects updater **Region 3**, v1.26:
+- physical K8 still generated the same ghost activity;
+- normal QLINK behavior was also altered.
 
-- EXE offset: `0x28c144`
-- length: `0x20000`
-- SHA-256: `b2a8c30125d8d93fae59b8726140c8887ca806c16808f8cbdb753813e91b7392`
+The old patch changed firmware offset `0x0e5ec` from `cmp r0,#8` to
+`cmp r0,#7`. That patch is now **rejected and permanently disabled**.
 
-The PID `0x1049` firmware uses ARMv7-M/Thumb-2 instructions and an STM32F1-style peripheral map (GPIOA `0x40010800`, GPIOB `0x40010c00`, ADC1 `0x40012400`, RCC `0x40021000`). This is not the Cortex-M0 instruction set used by the older service-manual STM32F070 design.
+## What the failure proved
 
-## Scan path recovered
+Re-analysis of the exact stock v1.26 image
+(`b2a8c30125d8a59...e91b7392`) found two separate eight-control loops.
 
-### Mux selector
+### Rejected loop
 
-Function `0x0801213e` accepts selector values 0..7 and drives GPIOB bits 0,1,2.
+- function starts near `0x0800e5d4`
+- loop bound at firmware offset `0x0e5ec`
+- first hardware build changed this loop
+- this loop is **not** the live QLINK program-record dispatch loop
 
-This is the 3-bit address for the parallel 74HC4051 muxes.
+Reconstructing the exact failed image proves the true runtime QLINK loop still
+has a bound of eight.
 
-### ADC scan
+### Live QLINK runtime loop
 
-Function `0x08011f42` rotates the mux selector modulo 8 and processes five ADC conversions. The first three are arrays of eight mux slots:
+The live routine starts at `0x08014912`.
 
-1. encoder phase A
-2. encoder phase B
-3. pad pressure
+Its loop bound is at firmware offset:
 
-Therefore globally skipping mux Y4 would be wrong: it would also suppress the pad occupying Y4 on the pad mux.
+`0x14932`
 
-### Encoder logical-to-mux map
+The routine is tied directly to the known MPK program format:
 
-The encoder routine uses two lookup tables:
+- it uses a stride of `0x14` / **20 bytes** per knob record;
+- it reads record fields corresponding to mode / CC / min / max;
+- its MIDI path calls the internal control-event dispatcher using the CC read
+  from the selected program record;
+- its UI path calculates `program_base + index*20 + 0x58`.
+  The first knob record starts at `+0x54`, so `+0x58` is exactly
+  **record + 4 = name[16]**.
 
-```
-phase A: 03 00 01 02 05 07 06 04
-phase B: 0b 08 09 0a 0d 0f 0e 0c
-```
+This is the first routine found that directly joins all three pieces:
 
-Subtracting 8 from the phase-B indices yields the identical mux mapping:
+1. raw knob index,
+2. the known 20-byte SysEx knob record,
+3. both MIDI and OLED/UI dispatch.
 
-```
-logical knob 0..7 -> mux channel
-K1 -> 3
-K2 -> 0
-K3 -> 1
-K4 -> 2
-K5 -> 5
-K6 -> 7
-K7 -> 6
-K8 -> 4
-```
+## Safety gate
 
-That matches the service schematic's 4051 wiring, where P8PHA/P8PHB are on Y4.
+No replacement firmware is approved yet.
 
-## Encoder event routine
+`tools/firmware_analysis.py` performs binary-level structural checks against
+the exact stock image.  The regression suite also reconstructs the failed
+hardware build and asserts that it left the true runtime loop at eight.
 
-Function `0x0800e5d4` loops logical knob indices 0..7. For each knob it:
+A future candidate must satisfy all of these before any installer is enabled:
 
-1. retrieves filtered phase A/B values;
-2. compares against previous phase values;
-3. computes movement/direction;
-4. updates the knob's 0..127 state;
-5. emits the control event via `0x0800cb9a` with the logical knob index.
+1. the rejected `0x0e5ec` loop remains byte-for-byte stock;
+2. K1-K7 retain the original program-record/MIDI/UI path;
+3. record 8 / K8 cannot enter the live dispatch path;
+4. only the intended code byte(s) and firmware checksum may differ;
+5. exact-stock integration tests pass against the known v1.26 SHA-256;
+6. the custom installer remains disabled until those checks are reviewed.
 
-The loop head is:
-
-```asm
-0800e5e8  ldrb.w r0, [r9]
-0800e5ec  cmp     r0, #8
-0800e5ee  bge.w   0800e79a
-```
-
-Physical K8 is logical index 7.
-
-## Patch
-
-Change:
-
-```
-file offset 0x0e5ec
-08 28    cmp r0,#8
-```
-
-to:
-
-```
-07 28    cmp r0,#7
-```
-
-The routine now processes indices 0..6 and exits before K8.
-
-This is deliberately downstream of the shared mux/ADC scanner but upstream of K8 movement/event generation. It preserves the pad sharing mux Y4 while preventing K8 from generating the event that drives MIDI, MIDI learn, and OLED focus.
-
-## Firmware checksum
-
-The final two bytes of the 128 KiB image are a big-endian 16-bit byte sum of offsets `0x00000..0x1fffd`.
-
-Stock:
-
-```
-sum = 0xe2ff
-stored at 0x1fffe = e2 ff
-```
-
-After the one-byte logic patch:
-
-```
-sum = 0xe2fe
-stored at 0x1fffe = e2 fe
-```
-
-Only two bytes in the complete firmware image change:
-
-```
-0x0e5ec: 08 -> 07
-0x1ffff: ff -> fe
-```
-
-Patched firmware SHA-256:
-
-`b7121c28293201a031200b56058fc5bee1fdbfdf053582d99e1fbea8029f3087`
-
-## Building a patched updater
-
-Do not commit Akai firmware/updater binaries.
-
-With the official v1.26 Windows updater already under `vendor/`:
-
-```bash
-python tools/build_mpkill8_updater.py
-```
-
-This verifies the exact stock Region 3 hash, applies the two-byte firmware delta, recalculates/verifies the firmware checksum, and writes a new updater under ignored `dist/`.
-
-The official ZIP is never modified in place.
+The first failed firmware must not be redistributed or flashed again.
