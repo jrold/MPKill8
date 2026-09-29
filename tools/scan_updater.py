@@ -8,16 +8,21 @@ This is intentionally a heuristic scanner. It looks for Cortex-M vector tables:
   - several additional exception vectors that are zero or plausible Thumb
     addresses inside flash
 
-It scans ordinary files and every non-directory member of ZIP archives.
+It scans ordinary files, recursively expands ZIP members, and probes common
+compression streams (zlib/gzip/bzip2/xz) for embedded firmware payloads.
 """
 
 from __future__ import annotations
 
 import argparse
+import bz2
+import gzip
 import hashlib
 import io
+import lzma
 import struct
 import sys
+import zlib
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -160,24 +165,81 @@ def scan_blob(
     return len(found)
 
 
-def iter_inputs(path: Path):
-    raw = path.read_bytes()
-    yield path.name, raw
+def decompress_common_streams(data: bytes, label: str):
+    """Yield plausible decompressed children from common embedded stream types."""
+    seen = set()
 
-    if zipfile.is_zipfile(io.BytesIO(raw)):
-        with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+    signatures = [
+        (b"\x1f\x8b", "gzip", lambda b: gzip.decompress(b)),
+        (b"BZh", "bzip2", lambda b: bz2.decompress(b)),
+        (b"\xfd7zXZ\x00", "xz", lambda b: lzma.decompress(b)),
+    ]
+
+    # zlib has several common two-byte headers.
+    for sig in (b"\x78\x01", b"\x78\x5e", b"\x78\x9c", b"\x78\xda"):
+        signatures.append((sig, "zlib", lambda b: zlib.decompress(b)))
+
+    for sig, kind, decoder in signatures:
+        start = 0
+        while True:
+            off = data.find(sig, start)
+            if off < 0:
+                break
+            start = off + 1
+            key = (kind, off)
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                child = decoder(data[off:])
+            except Exception:
+                continue
+            if len(child) < 64:
+                continue
+            yield f"{label}::{kind}@0x{off:x}", child
+
+
+def iter_blob_tree(label: str, data: bytes, depth: int = 0, seen_hashes=None):
+    if seen_hashes is None:
+        seen_hashes = set()
+    if depth > 5:
+        return
+
+    digest = hashlib.sha256(data).digest()
+    if digest in seen_hashes:
+        return
+    seen_hashes.add(digest)
+
+    yield label, data
+
+    bio = io.BytesIO(data)
+    if zipfile.is_zipfile(bio):
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
             for info in zf.infolist():
                 if info.is_dir():
                     continue
                 try:
                     member = zf.read(info)
-                except RuntimeError as exc:
+                except Exception as exc:
                     print(
                         f"warning: cannot read ZIP member {info.filename}: {exc}",
                         file=sys.stderr,
                     )
                     continue
-                yield f"{path.name}::{info.filename}", member
+                yield from iter_blob_tree(
+                    f"{label}::{info.filename}",
+                    member,
+                    depth + 1,
+                    seen_hashes,
+                )
+
+    for child_label, child in decompress_common_streams(data, label):
+        yield from iter_blob_tree(child_label, child, depth + 1, seen_hashes)
+
+
+def iter_inputs(path: Path):
+    raw = path.read_bytes()
+    yield from iter_blob_tree(path.name, raw)
 
 
 def main() -> int:
@@ -205,8 +267,8 @@ def main() -> int:
     print(f"\nTotal plausible vector-table candidates: {total}")
     if total == 0:
         print(
-            "The updater may compress/encrypt/package the firmware. "
-            "Next step is PE/resource or runtime USB-traffic analysis."
+            "No raw/decompressed STM32 vector table was found. "
+            "Next step is PE/resource inspection or runtime USB-traffic analysis."
         )
         return 1
     return 0
