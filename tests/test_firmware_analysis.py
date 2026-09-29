@@ -18,16 +18,23 @@ from tools.firmware_analysis import (
 
 class FirmwareAnalysisUnitTests(unittest.TestCase):
     def test_behavior_model_preserves_k1_to_k7_and_drops_only_record_8(self):
+        # Actual Program 1 mapping observed on the hardware.
         records = [
-            {"cc": 70 + i, "name": f"RECORD{i+1}"}
-            for i in range(8)
+            {"cc": 70, "name": "QLINK5"},
+            {"cc": 71, "name": "QLINK6"},
+            {"cc": 72, "name": "QLINK7"},
+            {"cc": 73, "name": "QLINK8"},
+            {"cc": 74, "name": "QLINK1"},
+            {"cc": 75, "name": "QLINK2"},
+            {"cc": 76, "name": "QLINK3"},
+            {"cc": 77, "name": "QLINK4"},
         ]
         stock = model_record_dispatch(8, records)
         candidate = model_record_dispatch(7, records)
 
         self.assertEqual(candidate, stock[:7])
-        self.assertNotIn((77, "RECORD8"), candidate)
-        self.assertEqual(stock[-1], (77, "RECORD8"))
+        self.assertNotIn((77, "QLINK4"), candidate)
+        self.assertEqual(stock[-1], (77, "QLINK4"))
 
     def test_integration_against_exact_stock_firmware_when_available(self):
         path = os.environ.get("MPKILL8_STOCK_BIN")
@@ -44,6 +51,8 @@ class FirmwareAnalysisUnitTests(unittest.TestCase):
         self.assertTrue(evidence.runtime_has_record_stride_20)
         self.assertTrue(evidence.runtime_has_midi_dispatch)
         self.assertTrue(evidence.runtime_has_ui_name_path)
+        self.assertTrue(evidence.phase_table_refs_are_unique)
+        self.assertTrue(evidence.current_program_base_matches)
 
         # Reconstruct the firmware that FAILED on real hardware.
         bad = reconstruct_rejected_hardware_build(stock)
