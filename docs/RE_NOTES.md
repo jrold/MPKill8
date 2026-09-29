@@ -210,3 +210,35 @@ That preserves all normal behavior while making K8 physically irrelevant.
   https://joonas.fi/2021/02/reverse-engineering-midi-devices-akai-mpk-mini-mk3/
 - sysex-controls:
   https://github.com/soyersoyer/sysex-controls
+
+
+## Experimental result: undocumented mode 2 FAILS
+
+Observed on physical hardware:
+
+- Physical K8 = program record 8, offset `0xE0`, CC77, display name `QLINK4`.
+- K8's physical knob is broken off. The remaining analog input produces ghost activity, especially while other knobs are moved.
+- RAM-only test changed record 8 mode from `0` (Absolute) to undocumented value `2`.
+- Device accepted and read back mode `2`.
+- During a stress test moving the surviving knobs, K8 produced **1255 CC77 messages**, overwhelmingly value `1`.
+- OLED flickered between the intentionally moved good knob and **QLINK4**.
+
+Conclusion:
+
+1. Mode `2` is **not OFF**.
+2. The repeated value `1` strongly suggests nonzero undocumented mode values are being interpreted through relative-mode behavior, or at least through a path that emits relative-style increments.
+3. Most importantly, the broken K8 event still reaches **both MIDI and OLED/UI dispatch**.
+4. Preset/SysEx configuration cannot satisfy the goal.
+
+### Required fix
+
+Patch firmware **before UI and MIDI dispatch** so physical K8 is discarded completely.
+
+Desired behavior:
+
+```c
+if (physical_knob_index == 7)
+    continue;   // no UI event, no MIDI event, no state update
+```
+
+The patch location should be at or immediately after the analog mux/ADC scan or debounce/change-detection stage, before the event is converted into a QLINK control event.
