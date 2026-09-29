@@ -339,7 +339,40 @@ def resign_and_launch(app: Path) -> None:
     )
     print()
 
-    subprocess.run(["/usr/bin/open", str(app)], check=True)
+    opened = subprocess.run(
+        ["/usr/bin/open", str(app)],
+        check=False,
+    )
+    if opened.returncode == 0:
+        return
+
+    print()
+    print("macOS LaunchServices refused the modified app wrapper.")
+    print("Launching the updater executable directly instead...")
+
+    info_plist = app / "Contents" / "Info.plist"
+    if not info_plist.is_file():
+        raise RuntimeError(f"Missing Info.plist: {info_plist}")
+
+    with info_plist.open("rb") as fh:
+        info = plistlib.load(fh)
+
+    exe_name = info.get("CFBundleExecutable")
+    if not exe_name:
+        raise RuntimeError("CFBundleExecutable is missing from Info.plist.")
+
+    executable = app / "Contents" / "MacOS" / exe_name
+    if not executable.is_file():
+        raise RuntimeError(f"Updater executable not found: {executable}")
+
+    executable.chmod(executable.stat().st_mode | 0o111)
+
+    print(f"Executable: {executable}")
+    subprocess.Popen(
+        [str(executable)],
+        cwd=str(executable.parent),
+        start_new_session=True,
+    )
 
 
 def main() -> int:
