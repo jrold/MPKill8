@@ -477,16 +477,20 @@ def cmd_probe(args: argparse.Namespace) -> int:
     if args.source == PROGRAM_RAM:
         raise MPKError("Use a saved source program (1..8), not RAM program 0.")
 
+    target_record = resolve_target_record(args)
+    target_offset = KNOB_OFFSETS[target_record - 1]
+
     with open_client(args) as mpk:
         original = mpk.read_program(args.source)
-        original_k8 = decode_knob(original)
+        original_k8 = decode_knob(original, target_offset)
         print(f"Read saved Program {args.source} ({len(original)} bytes).")
-        print_k8(original_k8, "Original K8")
+        print_k8(original_k8, f"Physical K8 / record {target_record}")
 
-        patched = patch_k8_mode(original, args.mode)
+        patched = patch_record_mode(original, target_record, args.mode)
         print(
-            f"\nWriting a VOLATILE copy to RAM Program 0 with only "
-            f"K8 mode changed: {original_k8.mode} -> {args.mode}"
+            f"\nWriting a VOLATILE copy to RAM Program 0 with only physical K8 "
+            f"(record {target_record}, offset 0x{target_offset:04X}) mode changed: "
+            f"{original_k8.mode} -> {args.mode}"
         )
         mpk.write_program(PROGRAM_RAM, patched)
         time.sleep(0.15)
@@ -495,8 +499,8 @@ def cmd_probe(args: argparse.Namespace) -> int:
         # the undocumented value, this tells us immediately.
         try:
             readback = mpk.read_program(PROGRAM_RAM)
-            readback_k8 = decode_knob(readback)
-            print_k8(readback_k8, "RAM readback K8")
+            readback_k8 = decode_knob(readback, target_offset)
+            print_k8(readback_k8, f"RAM readback physical K8 / record {target_record}")
             if readback_k8.mode != args.mode:
                 print(
                     f"\nDevice did not retain mode {args.mode}; "
@@ -514,12 +518,13 @@ def cmd_probe(args: argparse.Namespace) -> int:
             "\nRAM program is active. This has NOT overwritten Programs 1-8."
         )
         print(
-            "SUCCESS CRITERIA: the broken K8 input must stay completely silent: "
-            "no spontaneous MIDI CC and no spontaneous K8 popup/activity on the OLED."
+            "SUCCESS CRITERIA: moving the surviving knobs must NOT provoke the "
+            "broken K8 input: no K8 CC and no K8 popup/activity on the OLED."
         )
         input(
-            f"\nLeave the MPK alone and watch the OLED. Press Enter to begin "
-            f"a {args.seconds:.1f}-second idle observation window..."
+            f"\nWatch the OLED. Press Enter, then exercise K1-K7 (especially the "
+            f"ones that normally provoke the ghost) for {args.seconds:.1f} seconds. "
+            "Do not touch the broken K8 position..."
         )
 
         mpk.clear_queue()
@@ -560,9 +565,8 @@ def cmd_probe(args: argparse.Namespace) -> int:
 
         print(
             "\nOLED result cannot be measured over MIDI: "
-            "if the MPK sat untouched and K8 never popped up or changed anything "
-            "on the OLED during the observation window, this mode is a candidate "
-            "for the actual kill."
+            "if you exercised the good knobs and physical K8 never popped up or "
+            "changed anything on the OLED, this mode is a candidate for the actual kill."
         )
         print(
             f"RAM remains selected for further physical testing. "
