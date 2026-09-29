@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from tools.firmware_analysis import (
+    CANDIDATE_SHA256,
     CHECKSUM_OFFSET,
     REJECTED_PATCH_OFFSET,
     RUNTIME_LOOP_COMPARE,
@@ -76,9 +77,8 @@ class FirmwareAnalysisUnitTests(unittest.TestCase):
             i for i, (a, b) in enumerate(zip(stock, candidate))
             if a != b
         ]
-        allowed = {RUNTIME_LOOP_COMPARE, CHECKSUM_OFFSET, CHECKSUM_OFFSET + 1}
-        self.assertTrue(set(diffs).issubset(allowed), diffs)
-        self.assertIn(RUNTIME_LOOP_COMPARE, diffs)
+        self.assertEqual(diffs, [RUNTIME_LOOP_COMPARE, CHECKSUM_OFFSET + 1])
+        self.assertEqual(sha256(candidate), CANDIDATE_SHA256)
 
 
 if __name__ == "__main__":
