@@ -2,9 +2,9 @@
 """
 Download the official Akai MPK Mini MK3 v1.26 updater and immediately scan it.
 
-Akai's current downloads page exposes these official file endpoints:
-  Win: https://www.akaipro.com/amfile/file/download/file/1216/product/8428/
-  Mac: https://www.akaipro.com/amfile/file/download/file/1217/product/8428/
+Akai's current support article links to these official CDN endpoints:
+  Win: https://cdn.inmusicbrands.com/akai/mpk3mini/1_26/MPKmini3_Updater_v1.26_WIN.zip
+  Mac: https://cdn.inmusicbrands.com/akai/mpk3mini/1_26/MPKmini3_Updater_v1.26.app.zip
 
 Run on the user's normal machine; this environment may block binary downloads.
 """
@@ -20,8 +20,8 @@ from pathlib import Path
 
 
 URLS = {
-    "win": "https://www.akaipro.com/amfile/file/download/file/1216/product/8428/",
-    "mac": "https://www.akaipro.com/amfile/file/download/file/1217/product/8428/",
+    "win": "https://cdn.inmusicbrands.com/akai/mpk3mini/1_26/MPKmini3_Updater_v1.26_WIN.zip",
+    "mac": "https://cdn.inmusicbrands.com/akai/mpk3mini/1_26/MPKmini3_Updater_v1.26.app.zip",
 }
 
 DEFAULT_NAMES = {
