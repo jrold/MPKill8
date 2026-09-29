@@ -29,6 +29,9 @@ import sys
 import urllib.request
 from pathlib import Path
 
+BROKEN_BUILD_DISABLED = True
+
+
 
 AKAI_MAC_URL = (
     "https://cdn.inmusicbrands.com/akai/mpk3mini/1_26/"
@@ -423,6 +426,12 @@ def resign_and_launch(app: Path) -> None:
 
 
 def main() -> int:
+    if BROKEN_BUILD_DISABLED:
+        print("MPKill8 custom firmware install is DISABLED.")
+        print("The first hardware test showed the patch did not kill K8 and altered QLINK behavior.")
+        print("Restore stock firmware with: python3 restore_stock.py")
+        return 3
+
     if sys.platform != "darwin":
         print("This installer is for macOS.")
         print("Use the Windows install.bat only on Windows.")
