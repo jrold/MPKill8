@@ -288,6 +288,46 @@ def print_k8(record: KnobRecord, prefix: str = "K8") -> None:
     )
 
 
+def print_knob_table(payload: bytes) -> None:
+    print("Record  Offset  Mode  CC   Name")
+    print("------  ------  ----  ---  ----------------")
+    for i, (offset, knob) in enumerate(zip(KNOB_OFFSETS, decode_all_knobs(payload)), 1):
+        mode_name = {0: "ABS", 1: "REL"}.get(knob.mode, str(knob.mode))
+        print(f"{i:>6}  0x{offset:04X}  {mode_name:>4}  {knob.cc:>3}  {knob.name}")
+
+
+def collect_cc_counts(mpk: "MPKClient", seconds: float) -> Counter[int]:
+    mpk.clear_queue()
+    deadline = time.monotonic() + seconds
+    counts: Counter[int] = Counter()
+    while time.monotonic() < deadline:
+        try:
+            msg = mpk.messages.get(timeout=0.05)
+        except queue.Empty:
+            continue
+        if msg.type == "control_change":
+            counts[msg.control] += 1
+    return counts
+
+
+def resolve_target_record(args: argparse.Namespace) -> int:
+    if getattr(args, "record", None):
+        return args.record
+
+    mapping_path = Path(getattr(args, "mapping", "mapping.json"))
+    if mapping_path.is_file():
+        data = json.loads(mapping_path.read_text())
+        record = int(data["physical_to_record"]["K8"])
+        if 1 <= record <= 8:
+            print(f"Using physical K8 -> program record {record} from {mapping_path}")
+            return record
+
+    raise MPKError(
+        "Physical K8 has not been calibrated. Run 'python mpkill8.py calibrate "
+        "--source 1' first, or pass --record N explicitly."
+    )
+
+
 def cmd_ports(_args: argparse.Namespace) -> int:
     print("MIDI inputs:")
     for name in mido.get_input_names():
