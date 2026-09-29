@@ -311,21 +311,10 @@ def collect_cc_counts(mpk: "MPKClient", seconds: float) -> Counter[int]:
 
 
 def resolve_target_record(args: argparse.Namespace) -> int:
-    if getattr(args, "record", None):
-        return args.record
-
-    mapping_path = Path(getattr(args, "mapping", "mapping.json"))
-    if mapping_path.is_file():
-        data = json.loads(mapping_path.read_text())
-        record = int(data["physical_to_record"]["K8"])
-        if 1 <= record <= 8:
-            print(f"Using physical K8 -> program record {record} from {mapping_path}")
-            return record
-
-    raise MPKError(
-        "Physical K8 has not been calibrated. Run 'python mpkill8.py calibrate "
-        "--source 1' first, or pass --record N explicitly."
-    )
+    # The program record order is physical K1..K8. Akai's displayed QLINK
+    # names are row-swapped (K1..K4 show QLINK5..8, K5..K8 show QLINK1..4).
+    # Therefore physical K8 is record 8 unless explicitly overridden.
+    return getattr(args, "record", None) or 8
 
 
 def cmd_ports(_args: argparse.Namespace) -> int:
@@ -706,11 +695,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=30.0,
         help="Stress window while moving K1-K7 to provoke ghost K8 (default: 30 seconds)",
-    )
-    p.add_argument(
-        "--mapping",
-        default="mapping.json",
-        help="Calibration file used to resolve physical K8 (default: mapping.json)",
     )
     p.add_argument(
         "--record",
