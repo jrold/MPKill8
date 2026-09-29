@@ -10,3 +10,4 @@ dumps/
 *.zip
 *.exe
 *.app/
+mapping.json
