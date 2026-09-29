@@ -11,42 +11,65 @@ K1-K7 and the pads continue to use their original firmware paths.
 
 ## Install
 
-The target unit has been positively identified as:
+### macOS — primary workflow
+
+The target unit was identified as:
 
 - USB VID `0x09e8`
 - USB PID `0x1049`
 - Akai firmware v1.26, updater Region 3
 
-On the **Windows PC**, connect the MPK Mini 3 normally over USB, then:
+On the Mac with the MPK connected normally over USB:
+
+```bash
+git pull
+python3 install.py
+```
+
+That command:
+
+1. verifies the connected controller is the supported **VID 09E8 / PID 1049** revision;
+2. downloads Akai's official **macOS v1.26** updater if it is not already cached;
+3. extracts the official `.app`;
+4. searches the app bundle for the exact stock Region-3 firmware SHA-256;
+5. refuses to patch unless the embedded 128 KiB image matches the verified stock hash;
+6. applies the two-byte MPKill8 patch;
+7. verifies the exact patched firmware SHA-256;
+8. ad-hoc re-signs the modified app locally;
+9. launches the patched updater.
+
+When the Akai updater requires firmware-update mode, reconnect the MPK while holding **BANK + PROG SELECT**.
+
+The patched updater is created under:
+
+```
+dist/MPKmini3_Updater_v1.26_MPKILL8.app
+```
+
+The untouched Akai download remains cached under ignored `vendor/`.
+
+#### Restore stock on macOS
+
+```bash
+python3 restore_stock.py
+```
+
+That extracts and launches an untouched copy of Akai's official macOS v1.26 updater.
+
+### Windows — optional
+
+A Windows workflow remains available:
 
 ```bat
 git pull
 install.bat
 ```
 
-`install.bat`:
-
-1. refuses to continue unless Windows sees the supported **VID 09E8 / PID 1049** unit;
-2. downloads Akai's official v1.26 updater if it is not already cached;
-3. verifies the exact stock Region 3 SHA-256;
-4. applies the two-byte MPKill8 firmware patch;
-5. verifies the exact patched SHA-256;
-6. writes `dist/MPKmini3_Updater_v1.26_MPKILL8.exe`;
-7. launches the patched Akai updater.
-
-When the Akai updater asks for update/recovery mode, reconnect the MPK while holding **BANK + PROG SELECT**.
-
-Windows may warn that the modified updater no longer carries Akai's original valid publisher signature. That is expected because its embedded firmware was modified.
-
-### Restore stock firmware
-
-To launch an untouched copy of Akai's official v1.26 updater:
+and stock recovery:
 
 ```bat
 restore_stock.bat
 ```
-
-Keep the official updater available as a recovery path whenever testing custom firmware.
 
 ## Confirmed hardware / firmware target
 
