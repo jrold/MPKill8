@@ -130,23 +130,21 @@ The scanner recursively checks ZIP members and raw files for plausible STM32F070
 If undocumented mode values do not suppress both MIDI and OLED behavior, next step is binary extraction/static analysis of v1.26.
 
 
-## Physical knob calibration
+## Physical knob order
 
-Do this before probing K8. The program-record names are not a reliable physical label: on the user's factory program, physical K1 reports `QLINK5` while physical K5 reports `QLINK1`.
+The factory program confirms that program records 1..8 correspond to physical K1..K8. Akai's displayed QLINK names are row-swapped:
 
-```bash
-python mpkill8.py map --source 1
-python mpkill8.py calibrate --source 1
-```
+- physical K1..K4 -> QLINK5..QLINK8
+- physical K5..K8 -> QLINK1..QLINK4
 
-Calibration asks you to move physical K1 through K7 one at a time. The broken K8 is never touched. If ghost K8 traffic appears while another knob moves, it is retained as secondary evidence; the knob you intentionally move should dominate the event count.
+So physical K8 is program record 8, CC77, name QLINK4, offset `0xE0`.
 
-If all seven good knobs map uniquely, the remaining record is inferred as physical K8 and saved locally in `mapping.json`.
-
-Then run the kill probe:
+Run the kill probe directly:
 
 ```bash
 python mpkill8.py probe --source 1 --mode 2 --seconds 30
 ```
 
-During the probe, actively move K1-K7—especially the controls that normally provoke the K8 ghost. Success requires both zero K8 MIDI events and no K8 popup/value activity on the OLED.
+During the probe, actively move K1-K7—especially the controls that normally provoke the K8 ghost. Success requires both zero K8 MIDI events and no QLINK4/K8 popup/value activity on the OLED.
+
+The `calibrate` command remains only as a diagnostic tool; it is not required for the K8 probe.
