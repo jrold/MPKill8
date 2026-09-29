@@ -158,35 +158,37 @@ def main() -> int:
                 f"overlap=0x{n:x} ({n} bytes), identical={pct:.3f}%"
             )
 
-    # Greedy grouping by overlapping original ranges.
+    # Anchor each region at the first not-yet-assigned vector table and
+    # include only vector tables that begin within that exact 128 KiB span.
+    # Do NOT use transitive overlap between carved files: each carve is itself
+    # 128 KiB and can extend into the next resource.
     print("\nDISTINCT 128 KiB REGIONS")
     print("========================")
     groups = []
-    current = []
-    current_end = None
-    for item in items:
-        start = item["offset"]
-        end = start + len(item["data"])
-        if current and start >= current_end:
-            groups.append(current)
-            current = []
-            current_end = None
-        current.append(item)
-        current_end = max(current_end or end, end)
-    if current:
-        groups.append(current)
+    i = 0
+    while i < len(items):
+        root = items[i]
+        boundary = root["offset"] + FLASH_SIZE
+        group = [root]
+        i += 1
+        while i < len(items) and items[i]["offset"] < boundary:
+            group.append(items[i])
+            i += 1
+        groups.append(group)
 
     for gi, group in enumerate(groups, 1):
         root = group[0]
+        boundary = root["offset"] + FLASH_SIZE
         print(
             f"Region {gi}: root candidate #{root['candidate']} "
-            f"at EXE offset 0x{root['offset']:x}"
+            f"at EXE offset 0x{root['offset']:x} "
+            f"(window ends 0x{boundary:x})"
         )
         for item in group:
             rel = item["offset"] - root["offset"]
             print(
                 f"  candidate #{item['candidate']}: +0x{rel:x} "
-                f"(vector table inside this region)"
+                f"(vector table inside this 128 KiB region)"
             )
 
     print(
