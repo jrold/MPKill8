@@ -8,8 +8,11 @@ Workflow:
   3. Extract the .app using macOS 'ditto'.
   4. Locate the exact stock PID 0x1049 / v1.26 firmware image by SHA-256.
   5. Patch only the verified 128 KiB firmware region:
-       0x0e5ec: 08 -> 07   (encoder loop K1-K8 -> K1-K7)
+       0x14932: 08 -> 07   (live QLINK loop K1-K8 -> K1-K7)
        0x1ffff: ff -> fe   (Akai firmware checksum)
+
+     The rejected first-build site at 0x0e5ec is explicitly verified to remain
+     stock (08 28 / cmp r0,#8).
   6. Verify the exact patched firmware SHA-256.
   7. Ad-hoc re-sign the modified .app.
   8. Launch it.
@@ -29,9 +32,6 @@ import sys
 import urllib.request
 from pathlib import Path
 
-BROKEN_BUILD_DISABLED = True
-
-
 
 AKAI_MAC_URL = (
     "https://cdn.inmusicbrands.com/akai/mpk3mini/1_26/"
@@ -42,14 +42,15 @@ AKAI_VID = 0x09E8
 TARGET_PID = 0x1049
 
 REGION_SIZE = 0x20000
-PATCH_OFFSET = 0x0E5EC
+REJECTED_PATCH_OFFSET = 0x0E5EC
+PATCH_OFFSET = 0x14932
 CHECKSUM_OFFSET = 0x1FFFF
 
 STOCK_SHA256 = (
     "b2a8c30125d8d93fae59b8726140c8887ca806c16808f8cbdb753813e91b7392"
 )
 PATCHED_SHA256 = (
-    "b7121c28293201a031200b56058fc5bee1fdbfdf053582d99e1fbea8029f3087"
+    "0b76a936d9e17db0a5292f9ebf0cde98a339676b73a55d763abe80b5910c0bfc"
 )
 
 # First 8 bytes of the confirmed PID 0x1049 / v1.26 image:
@@ -269,21 +270,47 @@ def locate_stock_firmware(app: Path) -> tuple[Path, int, bytes]:
 
 
 def patch_firmware(container_file: Path, base: int, stock_region: bytes) -> None:
-    if stock_region[PATCH_OFFSET] != 0x08:
+    # The first hardware build changed 0x0e5ec and failed.  Refuse to proceed
+    # unless the source image has that rejected site restored to stock.
+    if stock_region[REJECTED_PATCH_OFFSET:REJECTED_PATCH_OFFSET + 2] != bytes.fromhex("08 28"):
         raise RuntimeError(
-            f"Expected stock byte 08 at firmware 0x{PATCH_OFFSET:x}; "
-            f"found {stock_region[PATCH_OFFSET]:02x}."
+            "Rejected first-build patch site is not stock at 0x0e5ec; "
+            "refusing to build from a previously modified firmware."
         )
+
+    # This is the live QLINK runtime loop proven to consume the raw phase
+    # tables, current-program 20-byte knob records, MIDI dispatch, and UI name.
+    if stock_region[PATCH_OFFSET:PATCH_OFFSET + 2] != bytes.fromhex("08 28"):
+        raise RuntimeError(
+            f"Expected live QLINK loop 'cmp r0,#8' at firmware 0x{PATCH_OFFSET:x}; "
+            f"found {stock_region[PATCH_OFFSET:PATCH_OFFSET+2].hex(' ')}."
+        )
+
     if stock_region[CHECKSUM_OFFSET] != 0xFF:
         raise RuntimeError(
             f"Expected stock checksum byte FF at firmware 0x{CHECKSUM_OFFSET:x}; "
             f"found {stock_region[CHECKSUM_OFFSET]:02x}."
         )
 
+    # Exact structural anchors from the verified stock image.
+    runtime = stock_region[0x14912:0x15322]
+    required = (
+        bytes.fromhex("14 20 42 43"),  # index * 20 program-record stride
+        bytes.fromhex("58 30"),        # +0x58 = record + 4 / name[16]
+        bytes.fromhex("f7 f7 eb fc"),  # MIDI dispatcher call
+        bytes.fromhex("fa f7 08 fe"),  # UI dispatcher call
+    )
+    if not all(x in runtime for x in required):
+        raise RuntimeError("Live QLINK runtime structural verification failed.")
+
     patched_region = bytearray(stock_region)
     patched_region[PATCH_OFFSET] = 0x07
     patched_region[CHECKSUM_OFFSET] = 0xFE
     patched_region = bytes(patched_region)
+
+    # Regression: the rejected site must still decode as cmp r0,#8.
+    if patched_region[REJECTED_PATCH_OFFSET:REJECTED_PATCH_OFFSET + 2] != bytes.fromhex("08 28"):
+        raise RuntimeError("Rejected first-build site changed unexpectedly.")
 
     actual = sha256(patched_region)
     if actual != PATCHED_SHA256:
@@ -291,6 +318,18 @@ def patch_firmware(container_file: Path, base: int, stock_region: bytes) -> None
             "Patched firmware hash verification failed.\n"
             f"Expected: {PATCHED_SHA256}\n"
             f"Actual:   {actual}"
+        )
+
+    # Exactly two bytes may differ from pristine stock: live loop immediate
+    # and the low checksum byte.
+    diffs = [
+        i for i, (a, b) in enumerate(zip(stock_region, patched_region))
+        if a != b
+    ]
+    expected_diffs = [PATCH_OFFSET, CHECKSUM_OFFSET]
+    if diffs != expected_diffs:
+        raise RuntimeError(
+            f"Unexpected firmware diff offsets: {[hex(x) for x in diffs]}"
         )
 
     blob = bytearray(container_file.read_bytes())
@@ -345,8 +384,9 @@ def resign_and_launch(app: Path) -> None:
     print(f"  Patched firmware: {PATCHED_SHA256}")
     print()
     print("Firmware changes:")
-    print("  0x0E5EC: 08 -> 07   (encoder loop processes K1-K7 only)")
-    print("  0x1FFFF: FF -> FE   (firmware checksum)")
+    print("  0x0E5EC: 08          (rejected first-build site restored to stock)")
+    print("  0x14932: 08 -> 07    (live QLINK loop processes K1-K7 only)")
+    print("  0x1FFFF: FF -> FE    (firmware checksum)")
     print()
     print(f"Patched updater: {app}")
     print()
@@ -426,12 +466,6 @@ def resign_and_launch(app: Path) -> None:
 
 
 def main() -> int:
-    if BROKEN_BUILD_DISABLED:
-        print("MPKill8 custom firmware install is DISABLED.")
-        print("The first hardware test showed the patch did not kill K8 and altered QLINK behavior.")
-        print("Restore stock firmware with: python3 restore_stock.py")
-        return 3
-
     if sys.platform != "darwin":
         print("This installer is for macOS.")
         print("Use the Windows install.bat only on Windows.")
