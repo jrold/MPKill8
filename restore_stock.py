@@ -65,7 +65,33 @@ def main() -> int:
     )
 
     print(f"Launching untouched official updater: {app}")
-    subprocess.run(["/usr/bin/open", str(app)], check=True)
+
+    # Prefer normal LaunchServices for the untouched vendor app.
+    opened = subprocess.run(["/usr/bin/open", str(app)], check=False)
+    if opened.returncode == 0:
+        return 0
+
+    # Fallback for Apple Silicon / Rosetta environments.
+    import plistlib
+    info_plist = app / "Contents" / "Info.plist"
+    with info_plist.open("rb") as fh:
+        info = plistlib.load(fh)
+    exe_name = info.get("CFBundleExecutable")
+    if not exe_name:
+        print("CFBundleExecutable missing from stock updater Info.plist")
+        return 1
+    exe = app / "Contents" / "MacOS" / exe_name
+    if not exe.is_file():
+        print(f"Stock updater executable not found: {exe}")
+        return 1
+
+    file_out = subprocess.check_output(["/usr/bin/file", str(exe)], text=True)
+    cmd = [str(exe)]
+    if "x86_64" in file_out:
+        cmd = ["/usr/bin/arch", "-x86_64", str(exe)]
+
+    print(f"Launching stock updater executable directly: {exe}")
+    subprocess.Popen(cmd, cwd=str(exe.parent), start_new_session=True)
     return 0
 
 
