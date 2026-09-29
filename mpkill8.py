@@ -13,9 +13,11 @@ Requires:
 from __future__ import annotations
 
 import argparse
+import json
 import queue
 import sys
 import time
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -33,7 +35,8 @@ CMD_REPLY = 0x67
 
 PROGRAM_RAM = 0
 
-K8_OFFSET = 0xE0
+KNOB_OFFSETS = tuple(0x54 + (i * 0x14) for i in range(8))
+K8_OFFSET = KNOB_OFFSETS[7]  # program record 8; physical mapping calibrated separately
 KNOB_RECORD_SIZE = 20
 KNOB_MODE = 0
 KNOB_CC = 1
