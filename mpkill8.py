@@ -338,6 +338,116 @@ def cmd_ports(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_map(args: argparse.Namespace) -> int:
+    with open_client(args) as mpk:
+        payload = mpk.read_program(args.source)
+        print(f"Program {args.source}: {len(payload)} payload bytes\n")
+        print_knob_table(payload)
+    return 0
+
+
+def cmd_calibrate(args: argparse.Namespace) -> int:
+    with open_client(args) as mpk:
+        payload = mpk.read_program(args.source)
+        records = decode_all_knobs(payload)
+
+        cc_to_records: dict[int, list[int]] = {}
+        for i, knob in enumerate(records, 1):
+            cc_to_records.setdefault(knob.cc, []).append(i)
+
+        print(f"Program {args.source} knob records:\n")
+        print_knob_table(payload)
+        print(
+            "\nWe will identify the seven surviving PHYSICAL knobs. "
+            "K8 is broken off and is NEVER touched. If its ghost input fires "
+            "while another knob moves, that is useful evidence and should appear "
+            "as a secondary CC."
+        )
+
+        mpk.select_program(args.source)
+        time.sleep(0.15)
+
+        physical_to_record: dict[str, int] = {}
+        details: dict[str, object] = {}
+
+        for physical in range(1, 8):
+            input(
+                f"\nPhysical K{physical}: press Enter, then immediately move ONLY "
+                f"K{physical} back and forth continuously for {args.seconds:.1f}s..."
+            )
+            counts = collect_cc_counts(mpk, args.seconds)
+            known = {cc: count for cc, count in counts.items() if cc in cc_to_records}
+
+            if not known:
+                print("  No knob-record CC traffic detected.")
+                details[f"K{physical}"] = {"counts": dict(counts), "record": None}
+                continue
+
+            ordered = sorted(known.items(), key=lambda item: item[1], reverse=True)
+            print("  observed:", ", ".join(f"CC{cc} x{count}" for cc, count in ordered))
+
+            best_cc, _ = ordered[0]
+            candidates = cc_to_records[best_cc]
+            if len(candidates) != 1:
+                print(f"  CC{best_cc} is shared by records {candidates}; cannot map uniquely.")
+                details[f"K{physical}"] = {"counts": dict(counts), "record": None}
+                continue
+
+            record = candidates[0]
+            physical_to_record[f"K{physical}"] = record
+            details[f"K{physical}"] = {
+                "counts": dict(counts),
+                "record": record,
+                "cc": best_cc,
+                "name": records[record - 1].name,
+            }
+            print(
+                f"  => physical K{physical} = program record {record} "
+                f"(CC{best_cc}, name={records[record - 1].name!r})"
+            )
+
+        used = set(physical_to_record.values())
+        remaining = [r for r in range(1, 9) if r not in used]
+
+        print("\n--- inferred physical mapping ---")
+        for physical in range(1, 8):
+            record = physical_to_record.get(f"K{physical}")
+            print(f"K{physical}: record {record if record else '?'}")
+
+        if len(physical_to_record) == 7 and len(remaining) == 1:
+            k8_record = remaining[0]
+            physical_to_record["K8"] = k8_record
+            k8 = records[k8_record - 1]
+            print(
+                f"K8: record {k8_record} (remaining record; "
+                f"CC{k8.cc}, name={k8.name!r})"
+            )
+
+            output = {
+                "source_program": args.source,
+                "physical_to_record": physical_to_record,
+                "records": {
+                    str(i): {
+                        "offset": KNOB_OFFSETS[i - 1],
+                        "cc": knob.cc,
+                        "name": knob.name,
+                        "mode": knob.mode,
+                    }
+                    for i, knob in enumerate(records, 1)
+                },
+                "calibration": details,
+            }
+            Path(args.output).write_text(json.dumps(output, indent=2) + "\n")
+            print(f"\nSaved mapping to {args.output}")
+            return 0
+
+        print(
+            f"\nCalibration inconclusive. Used records={sorted(used)}, "
+            f"remaining={remaining}. No mapping file written."
+        )
+        return 2
+
+
 def cmd_inspect(args: argparse.Namespace) -> int:
     with open_client(args) as mpk:
         payload = mpk.read_program(args.source)
