@@ -1,53 +1,103 @@
 # MPKill8
 
-Disable the broken **K8** knob on an Akai MPK Mini MK3 so it is completely ignored: no MIDI CC and, ultimately, no OLED reaction.
+Disable the physically broken **K8** knob on an Akai MPK Mini MK3 so it is completely ignored:
 
-## Current strategy
+- no CC77
+- no QLINK4 OLED focus
+- no MIDI-learn hijacking
+- no internal K8 movement event
 
-There are two paths, in increasing order of invasiveness:
+K1-K7 and the pads must continue to work normally.
 
-1. **RAM-only undocumented-mode probe** — clone a normal MPK program into the volatile RAM slot and change only K8's mode byte. The documented values are `0 = Absolute` and `1 = Relative`; the tool lets us test undocumented values without touching saved programs or firmware.
-2. **Firmware patch** — if the stock firmware treats every nonzero mode as Relative, extract the v1.26 firmware payload, locate the knob scan/event path, and patch K8 out before MIDI/UI dispatch.
+## Confirmed hardware / firmware target
 
-The first path is intentionally cheap and reversible. If it works, we get the desired behavior without flashing anything.
+The user's actual controller enumerates as:
 
-## What we know
+- USB VID: `0x09e8`
+- USB PID: `0x1049`
 
-### Hardware
+The correct Akai v1.26 firmware image is updater **Region 3**:
 
-- MCU: **STM32F070RBT6** (Cortex-M0, 128 KiB flash, 16 KiB SRAM).
-- The eight knobs are scanned through a **CD74HC4051** analog multiplexer.
-- In the service schematic, K8 is the `P8PHB` input and lands on mux input `Y4`.
-- Akai's firmware updater enters update mode by holding **BANK + PROG SELECT** while connecting USB.
+- EXE offset: `0x28c144`
+- image size: `0x20000` (128 KiB)
+- stock SHA-256: `b2a8c30125d8d93fae59b8726140c8887ca806c16808f8cbdb753813e91b7392`
 
-### MPK Mini MK3 SysEx
+The PID `0x1049` firmware uses ARMv7-M/Thumb-2 and an STM32F1-style peripheral map. The older service manual documents an STM32F070-based revision, so the manual cannot be treated as the CPU definition for this unit.
 
-Model ID: `0x49`
+## Why the preset/SysEx approach was rejected
 
-| Command | Value |
-|---|---:|
-| Select program | `0x62` |
-| Write program | `0x64` |
-| Query program | `0x66` |
-| Program reply | `0x67` |
+K8 is program record 8, CC77, display name QLINK4.
 
-Program `0` is the volatile **RAM** program. Programs `1..8` are saved slots.
+A RAM-only test set K8's undocumented mode byte to `2`. During a stress test while moving healthy knobs, the broken K8 generated **1,255 CC77 events**, overwhelmingly value `1`, and the OLED flickered between the intended knob and QLINK4.
 
-Each knob occupies 20 bytes in the program payload:
+Therefore preset configuration cannot make K8 truly dead.
+
+## Firmware path recovered
+
+The firmware scans a 3-bit 74HC4051 mux with selector values 0..7.
+
+The low-level ADC scanner processes three parallel muxed channels:
+
+1. encoder phase A
+2. encoder phase B
+3. pad pressure
+
+Because the pad mux shares the same selector, globally skipping mux Y4 would also break the pad on Y4. The kill therefore belongs in the **encoder-only** path.
+
+The encoder routine at `0x0800e5d4` loops logical knob indices 0..7.
+
+Its lookup tables map:
 
 ```
-+0x00  mode     (0 = Absolute, 1 = Relative)
-+0x01  CC
-+0x02  minimum
-+0x03  maximum
-+0x04  name[16]
+K1 -> mux 3
+K2 -> mux 0
+K3 -> mux 1
+K4 -> mux 2
+K5 -> mux 5
+K6 -> mux 7
+K7 -> mux 6
+K8 -> mux 4
 ```
 
-K8 begins at payload offset **`0xE0`**.
+The loop head is:
 
-## First experiment
+```asm
+0800e5e8  ldrb.w r0, [r9]
+0800e5ec  cmp     r0, #8
+0800e5ee  bge.w   0800e79a
+```
 
-Requirements:
+## MPKill8 patch
+
+Change one instruction byte:
+
+```
+firmware offset 0x0e5ec
+08 28    cmp r0,#8
+          ↓
+07 28    cmp r0,#7
+```
+
+Now the encoder routine processes K1-K7 and exits before physical K8.
+
+Akai's firmware checksum is a big-endian 16-bit sum of all bytes before the final two checksum bytes. Recomputing it changes one more byte:
+
+```
+0x0e5ec: 08 -> 07
+0x1ffff: ff -> fe
+```
+
+Those are the **only two bytes** changed in the 128 KiB firmware.
+
+Patched firmware SHA-256:
+
+`b7121c28293201a031200b56058fc5bee1fdbfdf053582d99e1fbea8029f3087`
+
+Full reverse-engineering notes: [docs/FIRMWARE_PATCH.md](docs/FIRMWARE_PATCH.md)
+
+## Build the patched updater
+
+Create the virtual environment if needed:
 
 ```bash
 python3 -m venv .venv
@@ -55,96 +105,72 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-List ports:
+Download/scan Akai's official v1.26 updater:
+
+```bash
+python tools/fetch_updater.py win
+```
+
+Confirm the connected controller family on macOS:
+
+```bash
+python tools/detect_usb_identity.py
+```
+
+For this project it must report:
+
+```
+VID 0x09e8, PID 0x1049
+```
+
+Build a patched copy of the Windows updater:
+
+```bash
+python tools/build_mpkill8_updater.py
+```
+
+Outputs are written under ignored `dist/`:
+
+```
+dist/MPKmini3_Updater_v1.26_MPKILL8.exe
+dist/MPKmini3_Updater_v1.26_MPKILL8_WIN.zip
+```
+
+The original Akai ZIP is never modified.
+
+## Recovery / flashing caution
+
+This is a custom firmware flash. Keep the untouched official v1.26 updater available before testing the patched updater.
+
+Akai's documented recovery/update mode is entered by holding **BANK + PROG SELECT** while connecting USB.
+
+The patch is intentionally minimal: one encoder-loop immediate plus the corresponding firmware-checksum byte. Nevertheless, flashing modified firmware always carries some risk.
+
+## Utility commands
+
+List MIDI ports:
 
 ```bash
 python mpkill8.py ports
 ```
 
-Read a saved program and inspect K8:
+Inspect a program:
 
 ```bash
 python mpkill8.py inspect --source 1
 ```
 
-Try undocumented mode `2` in the volatile RAM program:
+Sniff MIDI:
 
 ```bash
-python mpkill8.py probe --source 1 --mode 2
+python mpkill8.py sniff --all-ports --seconds 10
 ```
 
-The tool:
-
-1. reads saved Program 1;
-2. changes only K8's mode byte;
-3. writes the modified copy to Program 0 (RAM);
-4. selects RAM;
-5. leaves the controller untouched and watches for the broken K8 input to fire spontaneously.
-
-**K8 is physically broken off; do not try to move anything.** Watch the MPK OLED while the controller sits idle. Success means BOTH:
-
-- the tool sees no spontaneous K8 CC messages; and
-- K8 never causes a spontaneous popup/value change on the OLED.
-
-The default idle observation is 60 seconds. Because the fault is intermittent, a longer test is better:
-
-```bash
-python mpkill8.py probe --source 1 --mode 2 --seconds 300
-```
-
-If mode `2` fails, try:
-
-```bash
-python mpkill8.py probe --source 1 --mode 127
-```
-
-Nothing in `probe` writes Programs 1–8.
-
-## Firmware-updater analysis
-
-Akai currently publishes MPK Mini MK3 updater **v1.26**. Put the downloaded Windows updater ZIP/EXE anywhere outside the repo (or under ignored `vendor/`) and run:
-
-```bash
-python tools/scan_updater.py /path/to/MPKmini3_Updater_v1.26_WIN.zip
-```
-
-The scanner recursively checks ZIP members and raw files for plausible STM32F070 vector tables. If the updater contains an uncompressed firmware image, this should identify its offset and allow us to carve it out for Ghidra.
-
-## Safety / recovery
-
-- The RAM probe does **not** overwrite your saved programs.
-- Selecting a normal program or power-cycling returns to normal configuration.
-- Do not flash any patched image until we have extracted and verified the stock v1.26 payload and have a recovery route.
+The old undocumented-mode `probe` remains in the tool for reproducibility, but it is no longer the chosen solution.
 
 ## Sources / prior work
 
-- Akai MPK Mini MK3 service schematic/manual: https://www.manualslib.com/manual/2910998/Akai-Mpk-Mini-Mk3.html?page=34
-- Akai firmware recovery/update instructions: https://support.akaipro.com/en/support/solutions/articles/69000798892-akai-pro-mpk-mini-mk3-upgrade-v-error-and-installing-the-firmware
-- Joonas Pihlajamaa's MK3 SysEx reverse engineering: https://joonas.fi/2021/02/reverse-engineering-midi-devices-akai-mpk-mini-mk3/
-- sysex-controls MK3 implementation: https://github.com/soyersoyer/sysex-controls
-
-## Status
-
-**Phase 1: RAM-only K8 disable probe — implemented.**
-
-If undocumented mode values do not suppress both MIDI and OLED behavior, next step is binary extraction/static analysis of v1.26.
-
-
-## Physical knob order
-
-The factory program confirms that program records 1..8 correspond to physical K1..K8. Akai's displayed QLINK names are row-swapped:
-
-- physical K1..K4 -> QLINK5..QLINK8
-- physical K5..K8 -> QLINK1..QLINK4
-
-So physical K8 is program record 8, CC77, name QLINK4, offset `0xE0`.
-
-Run the kill probe directly:
-
-```bash
-python mpkill8.py probe --source 1 --mode 2 --seconds 30
-```
-
-During the probe, actively move K1-K7—especially the controls that normally provoke the K8 ghost. Success requires both zero K8 MIDI events and no QLINK4/K8 popup/value activity on the OLED.
-
-The `calibrate` command remains only as a diagnostic tool; it is not required for the K8 probe.
+- Akai MPK Mini MK3 service schematic/manual
+- Akai firmware recovery/update instructions
+- Joonas Pihlajamaa's MPK Mini MK3 SysEx reverse engineering
+- sysex-controls MK3 implementation
