@@ -1,5 +1,21 @@
 # MPKill8
 
+> **CUSTOM FIRMWARE INSTALL IS CURRENTLY DISABLED.**
+>
+> The first hardware test failed: K8 remained active and normal QLINK behavior
+> was altered. The rejected patch targeted the wrong 8-control loop.
+>
+> Restore stock firmware before further testing:
+>
+> ```bash
+> git pull
+> python3 restore_stock.py
+> ```
+>
+> No replacement firmware will be published until the binary-level regression
+> suite passes against the exact stock v1.26 image and the live QLINK
+> record/MIDI/UI path has been verified.
+
 Disable the physically broken **K8** knob on an Akai MPK Mini MK3 so it is completely ignored:
 
 - no CC77
