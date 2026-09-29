@@ -25,8 +25,8 @@ URLS = {
 }
 
 DEFAULT_NAMES = {
-    "win": "MPKmini3_Updater_v1.26_WIN.download",
-    "mac": "MPKmini3_Updater_v1.26_MAC.download",
+    "win": "MPKmini3_Updater_v1.26_WIN.zip",
+    "mac": "MPKmini3_Updater_v1.26.app.zip",
 }
 
 
