@@ -39,6 +39,21 @@ EXPECTED_PHASE_B = bytes([11, 8, 9, 10, 13, 15, 14, 12])
 
 CHECKSUM_OFFSET = 0x1FFFE
 
+# Pointer-pool references to the phase lookup tables.  There are exactly two
+# consumers in the entire stock image: rejected alternate path and live path.
+EXPECTED_PHASE_A_POINTER_REFS = (0x0EEB8, 0x15330)
+EXPECTED_PHASE_B_POINTER_REFS = (0x0EEBC, 0x15334)
+
+# Call sites used to distinguish alternate/service processing from normal
+# runtime processing.
+REJECTED_CALL_SITE = 0x0E552
+NORMAL_RUNTIME_CALL_SITE = 0x182A0
+
+# The live init/UI code uses the same current-program RAM base.
+CURRENT_PROGRAM_BASE = 0x20003220
+CURRENT_PROGRAM_BASE_PTR_INIT = 0x15324
+CURRENT_PROGRAM_BASE_PTR_UI = 0x15740
+
 
 @dataclass(frozen=True)
 class KnobPathEvidence:
@@ -51,6 +66,8 @@ class KnobPathEvidence:
     runtime_has_record_stride_20: bool
     runtime_has_midi_dispatch: bool
     runtime_has_ui_name_path: bool
+    phase_table_refs_are_unique: bool
+    current_program_base_matches: bool
 
 
 def sha256(data: bytes) -> str:
@@ -106,6 +123,47 @@ def analyze_stock(image: bytes, require_stock_hash: bool = True) -> KnobPathEvid
     if phase_b != EXPECTED_PHASE_B:
         raise AssertionError(f"Unexpected phase-B table: {phase_b.hex(' ')}")
 
+    # Prove there are only two consumers of these raw knob phase-order tables.
+    a_ptr = (0x08000000 + PHASE_A_TABLE).to_bytes(4, "little")
+    b_ptr = (0x08000000 + PHASE_B_TABLE).to_bytes(4, "little")
+
+    def refs(pattern: bytes) -> tuple[int, ...]:
+        found = []
+        start = 0
+        while True:
+            pos = image.find(pattern, start)
+            if pos < 0:
+                break
+            found.append(pos)
+            start = pos + 1
+        return tuple(found)
+
+    a_refs = refs(a_ptr)
+    b_refs = refs(b_ptr)
+    if a_refs != EXPECTED_PHASE_A_POINTER_REFS:
+        raise AssertionError(f"Unexpected phase-A pointer refs: {a_refs!r}")
+    if b_refs != EXPECTED_PHASE_B_POINTER_REFS:
+        raise AssertionError(f"Unexpected phase-B pointer refs: {b_refs!r}")
+
+    # Distinguish the rejected path from normal runtime by exact call sites.
+    # 0x0800e552 -> 0x0800e5d4 (rejected routine)
+    _require(image, REJECTED_CALL_SITE, bytes.fromhex("00 f0 3f f8"), "rejected call")
+    # 0x080182a0 -> 0x08014912 (live routine in normal main loop)
+    _require(image, NORMAL_RUNTIME_CALL_SITE, bytes.fromhex("fc f7 37 fb"), "normal runtime call")
+
+    init_base = int.from_bytes(
+        image[CURRENT_PROGRAM_BASE_PTR_INIT:CURRENT_PROGRAM_BASE_PTR_INIT + 4],
+        "little",
+    )
+    ui_base = int.from_bytes(
+        image[CURRENT_PROGRAM_BASE_PTR_UI:CURRENT_PROGRAM_BASE_PTR_UI + 4],
+        "little",
+    )
+    if init_base != CURRENT_PROGRAM_BASE or ui_base != CURRENT_PROGRAM_BASE:
+        raise AssertionError(
+            f"Current-program base mismatch: init={init_base:#x}, ui={ui_base:#x}"
+        )
+
     runtime = image[RUNTIME_FUNCTION_START:RUNTIME_FUNCTION_END]
 
     # Structural anchors from the exact Thumb code:
@@ -156,6 +214,8 @@ def analyze_stock(image: bytes, require_stock_hash: bool = True) -> KnobPathEvid
         runtime_has_record_stride_20=record_stride_20,
         runtime_has_midi_dispatch=runtime_has_midi,
         runtime_has_ui_name_path=runtime_has_ui,
+        phase_table_refs_are_unique=True,
+        current_program_base_matches=True,
     )
 
 
