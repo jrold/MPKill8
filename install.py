@@ -307,8 +307,6 @@ def resign_and_launch(app: Path) -> None:
         check=True,
     )
 
-    # urllib does not normally add quarantine, but clear it recursively if
-    # present so the locally modified app is not blocked solely by quarantine.
     subprocess.run(
         ["/usr/bin/xattr", "-dr", "com.apple.quarantine", str(app)],
         check=False,
@@ -320,35 +318,6 @@ def resign_and_launch(app: Path) -> None:
         ["/usr/bin/codesign", "--verify", "--deep", "--strict", str(app)],
         check=True,
     )
-
-    print()
-    print("PATCH VERIFIED")
-    print(f"  Stock firmware:   {STOCK_SHA256}")
-    print(f"  Patched firmware: {PATCHED_SHA256}")
-    print()
-    print("Firmware changes:")
-    print("  0x0E5EC: 08 -> 07   (encoder loop processes K1-K7 only)")
-    print("  0x1FFFF: FF -> FE   (firmware checksum)")
-    print()
-    print(f"Patched updater: {app}")
-    print()
-    print("Launching patched Akai updater...")
-    print(
-        "When the updater requires firmware-update mode, reconnect the MPK "
-        "while holding BANK + PROG SELECT."
-    )
-    print()
-
-    opened = subprocess.run(
-        ["/usr/bin/open", str(app)],
-        check=False,
-    )
-    if opened.returncode == 0:
-        return
-
-    print()
-    print("macOS LaunchServices refused the modified app wrapper.")
-    print("Launching the updater executable directly instead...")
 
     info_plist = app / "Contents" / "Info.plist"
     if not info_plist.is_file():
@@ -367,9 +336,87 @@ def resign_and_launch(app: Path) -> None:
 
     executable.chmod(executable.stat().st_mode | 0o111)
 
-    print(f"Executable: {executable}")
+    print()
+    print("PATCH VERIFIED")
+    print(f"  Stock firmware:   {STOCK_SHA256}")
+    print(f"  Patched firmware: {PATCHED_SHA256}")
+    print()
+    print("Firmware changes:")
+    print("  0x0E5EC: 08 -> 07   (encoder loop processes K1-K7 only)")
+    print("  0x1FFFF: FF -> FE   (firmware checksum)")
+    print()
+    print(f"Patched updater: {app}")
+    print()
+
+    # Determine the actual Mach-O architecture before attempting launch.
+    arch_result = subprocess.run(
+        ["/usr/bin/file", str(executable)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    arch_text = arch_result.stdout.strip()
+    print(f"Updater architecture: {arch_text}")
+    print()
+
+    launch_cmd = [str(executable)]
+
+    if "x86_64" in arch_text:
+        # On Apple Silicon an x86_64-only binary requires Rosetta 2.
+        rosetta_test = subprocess.run(
+            ["/usr/bin/arch", "-x86_64", "/usr/bin/true"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+        if rosetta_test.returncode != 0:
+            print("Rosetta 2 is not installed. Installing it now...")
+            install = subprocess.run(
+                [
+                    "/usr/sbin/softwareupdate",
+                    "--install-rosetta",
+                    "--agree-to-license",
+                ],
+                check=False,
+            )
+            if install.returncode != 0:
+                raise RuntimeError(
+                    "Rosetta 2 installation failed. You can install it manually with: "
+                    "softwareupdate --install-rosetta"
+                )
+
+            rosetta_test = subprocess.run(
+                ["/usr/bin/arch", "-x86_64", "/usr/bin/true"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if rosetta_test.returncode != 0:
+                raise RuntimeError(
+                    "Rosetta 2 still is not available after installation."
+                )
+
+            print("Rosetta 2 installed successfully.")
+            print()
+
+        launch_cmd = ["/usr/bin/arch", "-x86_64", str(executable)]
+
+    elif re.search(r"\bi386\b", arch_text) and "x86_64" not in arch_text:
+        raise RuntimeError(
+            "Akai's downloaded updater is 32-bit i386 only. Rosetta 2 cannot "
+            "run 32-bit Intel applications. Direct USB flashing will be required."
+        )
+
+    print("Launching patched Akai updater...")
+    print(
+        "When the updater requires firmware-update mode, reconnect the MPK "
+        "while holding BANK + PROG SELECT."
+    )
+    print()
+
     subprocess.Popen(
-        [str(executable)],
+        launch_cmd,
         cwd=str(executable.parent),
         start_new_session=True,
     )
