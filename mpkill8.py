@@ -348,12 +348,12 @@ def cmd_probe(args: argparse.Namespace) -> int:
             "\nRAM program is active. This has NOT overwritten Programs 1-8."
         )
         print(
-            "SUCCESS CRITERIA: K8 must produce no MIDI AND the MPK OLED must "
-            "not react when K8 moves."
+            "SUCCESS CRITERIA: the broken K8 input must stay completely silent: "
+            "no spontaneous MIDI CC and no spontaneous K8 popup/activity on the OLED."
         )
         input(
-            f"\nWatch the OLED. Press Enter, then rotate ONLY K8 continuously "
-            f"for {args.seconds:.1f} seconds..."
+            f"\nLeave the MPK alone and watch the OLED. Press Enter to begin "
+            f"a {args.seconds:.1f}-second idle observation window..."
         )
 
         mpk.clear_queue()
@@ -394,8 +394,9 @@ def cmd_probe(args: argparse.Namespace) -> int:
 
         print(
             "\nOLED result cannot be measured over MIDI: "
-            "if the OLED stayed completely unchanged while you turned K8, "
-            "this mode is a candidate for the actual kill."
+            "if the MPK sat untouched and K8 never popped up or changed anything "
+            "on the OLED during the observation window, this mode is a candidate "
+            "for the actual kill."
         )
         print(
             f"RAM remains selected for further physical testing. "
@@ -449,8 +450,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--seconds",
         type=float,
-        default=4.0,
-        help="MIDI observation window after pressing Enter (default: 4)",
+        default=60.0,
+        help="Idle observation window for spontaneous K8 activity (default: 60 seconds)",
     )
     add_port_args(p)
     p.set_defaults(func=cmd_probe)
