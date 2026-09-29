@@ -7,7 +7,46 @@ Disable the physically broken **K8** knob on an Akai MPK Mini MK3 so it is compl
 - no MIDI-learn hijacking
 - no internal K8 movement event
 
-K1-K7 and the pads must continue to work normally.
+K1-K7 and the pads continue to use their original firmware paths.
+
+## Install
+
+The target unit has been positively identified as:
+
+- USB VID `0x09e8`
+- USB PID `0x1049`
+- Akai firmware v1.26, updater Region 3
+
+On the **Windows PC**, connect the MPK Mini 3 normally over USB, then:
+
+```bat
+git pull
+install.bat
+```
+
+`install.bat`:
+
+1. refuses to continue unless Windows sees the supported **VID 09E8 / PID 1049** unit;
+2. downloads Akai's official v1.26 updater if it is not already cached;
+3. verifies the exact stock Region 3 SHA-256;
+4. applies the two-byte MPKill8 firmware patch;
+5. verifies the exact patched SHA-256;
+6. writes `dist/MPKmini3_Updater_v1.26_MPKILL8.exe`;
+7. launches the patched Akai updater.
+
+When the Akai updater asks for update/recovery mode, reconnect the MPK while holding **BANK + PROG SELECT**.
+
+Windows may warn that the modified updater no longer carries Akai's original valid publisher signature. That is expected because its embedded firmware was modified.
+
+### Restore stock firmware
+
+To launch an untouched copy of Akai's official v1.26 updater:
+
+```bat
+restore_stock.bat
+```
+
+Keep the official updater available as a recovery path whenever testing custom firmware.
 
 ## Confirmed hardware / firmware target
 
