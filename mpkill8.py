@@ -338,6 +338,60 @@ def cmd_ports(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_sniff(args: argparse.Namespace) -> int:
+    names = mido.get_input_names()
+    if not names:
+        raise MPKError("No MIDI input ports found.")
+
+    if args.all_ports:
+        selected = names
+    else:
+        selected = [choose_port(names, args.input_port, "input")]
+
+    print("Listening on:")
+    for name in selected:
+        print(f"  {name}")
+    print(
+        f"\nMove knobs / press pads / keys for {args.seconds:.1f} seconds. "
+        "Printing EVERY incoming MIDI message..."
+    )
+
+    q: queue.Queue[tuple[str, mido.Message]] = queue.Queue()
+    ports = []
+
+    try:
+        for name in selected:
+            ports.append(
+                mido.open_input(
+                    name,
+                    callback=lambda msg, port_name=name: q.put((port_name, msg)),
+                )
+            )
+
+        deadline = time.monotonic() + args.seconds
+        count = 0
+        while time.monotonic() < deadline:
+            try:
+                port_name, msg = q.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            count += 1
+            print(f"[{port_name}] {msg}")
+
+        print(f"\nTotal incoming messages: {count}")
+        if count == 0:
+            print(
+                "No performance MIDI reached the opened CoreMIDI input(s). "
+                "That means the SysEx/config path is not enough for calibration; "
+                "we need to identify the performance endpoint before mapping knobs."
+            )
+    finally:
+        for port in ports:
+            port.close()
+
+    return 0
+
+
 def cmd_map(args: argparse.Namespace) -> int:
     with open_client(args) as mpk:
         payload = mpk.read_program(args.source)
@@ -589,6 +643,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("ports", help="List MIDI ports")
     p.set_defaults(func=cmd_ports)
+
+    p = sub.add_parser("sniff", help="Print every incoming MIDI message")
+    p.add_argument("--seconds", type=float, default=10.0)
+    p.add_argument("--input-port", help="Exact MIDI input port name")
+    p.add_argument(
+        "--all-ports",
+        action="store_true",
+        help="Listen on every available MIDI input port",
+    )
+    p.set_defaults(func=cmd_sniff)
 
     p = sub.add_parser("map", help="Show all eight program knob records")
     p.add_argument("--source", type=int, default=1, choices=range(0, 9))
