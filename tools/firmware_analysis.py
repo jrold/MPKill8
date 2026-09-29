@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 IMAGE_SIZE = 0x20000
 STOCK_SHA256 = "b2a8c30125d8d93fae59b8726140c8887ca806c16808f8cbdb753813e91b7392"
+CANDIDATE_SHA256 = "0b76a936d9e17db0a5292f9ebf0cde98a339676b73a55d763abe80b5910c0bfc"
 
 # Rejected hardware-tested patch.
 REJECTED_PATCH_OFFSET = 0x0E5EC
