@@ -79,12 +79,18 @@ The tool:
 2. changes only K8's mode byte;
 3. writes the modified copy to Program 0 (RAM);
 4. selects RAM;
-5. asks you to rotate K8 while it watches for MIDI CC.
+5. leaves the controller untouched and watches for the broken K8 input to fire spontaneously.
 
-**Watch the MPK OLED during the test.** Success means BOTH:
+**K8 is physically broken off; do not try to move anything.** Watch the MPK OLED while the controller sits idle. Success means BOTH:
 
-- the tool sees no K8 CC messages; and
-- the OLED does not react to K8.
+- the tool sees no spontaneous K8 CC messages; and
+- K8 never causes a spontaneous popup/value change on the OLED.
+
+The default idle observation is 60 seconds. Because the fault is intermittent, a longer test is better:
+
+```bash
+python mpkill8.py probe --source 1 --mode 2 --seconds 300
+```
 
 If mode `2` fails, try:
 
