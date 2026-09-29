@@ -81,15 +81,28 @@ def decode_knob(payload: bytes, offset: int = K8_OFFSET) -> KnobRecord:
     )
 
 
-def patch_k8_mode(payload: bytes, mode: int) -> bytes:
+def decode_all_knobs(payload: bytes) -> list[KnobRecord]:
+    return [decode_knob(payload, offset) for offset in KNOB_OFFSETS]
+
+
+def patch_record_mode(payload: bytes, record: int, mode: int) -> bytes:
+    if not 1 <= record <= 8:
+        raise ValueError("Knob record must be 1..8.")
     if not 0 <= mode <= 0x7F:
         raise ValueError("SysEx data bytes must be in the range 0..127.")
-    if len(payload) < K8_OFFSET + KNOB_RECORD_SIZE:
-        raise MPKError("Program payload is too short to contain K8.")
+
+    offset = KNOB_OFFSETS[record - 1]
+    if len(payload) < offset + KNOB_RECORD_SIZE:
+        raise MPKError(f"Program payload is too short to contain knob record {record}.")
 
     patched = bytearray(payload)
-    patched[K8_OFFSET + KNOB_MODE] = mode
+    patched[offset + KNOB_MODE] = mode
     return bytes(patched)
+
+
+def patch_k8_mode(payload: bytes, mode: int) -> bytes:
+    # Backward-compatible helper: program record 8 only.
+    return patch_record_mode(payload, 8, mode)
 
 
 def make_query(program: int) -> mido.Message:
