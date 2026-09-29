@@ -128,3 +128,25 @@ The scanner recursively checks ZIP members and raw files for plausible STM32F070
 **Phase 1: RAM-only K8 disable probe — implemented.**
 
 If undocumented mode values do not suppress both MIDI and OLED behavior, next step is binary extraction/static analysis of v1.26.
+
+
+## Physical knob calibration
+
+Do this before probing K8. The program-record names are not a reliable physical label: on the user's factory program, physical K1 reports `QLINK5` while physical K5 reports `QLINK1`.
+
+```bash
+python mpkill8.py map --source 1
+python mpkill8.py calibrate --source 1
+```
+
+Calibration asks you to move physical K1 through K7 one at a time. The broken K8 is never touched. If ghost K8 traffic appears while another knob moves, it is retained as secondary evidence; the knob you intentionally move should dominate the event count.
+
+If all seven good knobs map uniquely, the remaining record is inferred as physical K8 and saved locally in `mapping.json`.
+
+Then run the kill probe:
+
+```bash
+python mpkill8.py probe --source 1 --mode 2 --seconds 30
+```
+
+During the probe, actively move K1-K7—especially the controls that normally provoke the K8 ghost. Success requires both zero K8 MIDI events and no K8 popup/value activity on the OLED.
