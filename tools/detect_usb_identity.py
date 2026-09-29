@@ -11,6 +11,7 @@ physical device:
 from __future__ import annotations
 
 import plistlib
+import re
 import subprocess
 import sys
 
@@ -24,10 +25,13 @@ def parse_hexish(value):
     if isinstance(value, int):
         return value
     s = str(value).strip().lower()
-    # system_profiler often emits strings like "0x0049"
+    # system_profiler commonly emits strings like:
+    #   "0x09e8  (AKAI professional M.I. Corp.)"
+    # so extract the first hex token rather than parsing the whole field.
+    m = re.search(r"0x([0-9a-f]+)", s)
+    if m:
+        return int(m.group(1), 16)
     try:
-        if s.startswith("0x"):
-            return int(s, 16)
         return int(s, 0)
     except ValueError:
         return None
@@ -42,6 +46,60 @@ def walk(node):
         for value in node:
             yield from walk(value)
 
+
+
+def detect_with_ioreg():
+    """Fallback USB scan using IORegistry when system_profiler is unhelpful."""
+    try:
+        raw = subprocess.check_output(
+            ["ioreg", "-p", "IOUSB", "-l", "-w", "0"],
+            stderr=subprocess.STDOUT,
+            text=True,
+            errors="replace",
+        )
+    except Exception:
+        return []
+
+    matches = []
+    current_name = None
+    current_vid = None
+    current_pid = None
+
+    for line in raw.splitlines():
+        stripped = line.strip()
+
+        # Device tree line, e.g. '+-o MPK mini 3@...'
+        m_name = re.search(r"\+-o\s+(.+?)(?:@|\s{2,}|$)", stripped)
+        if m_name:
+            if current_name is not None and (
+                current_vid == AKAI_VID
+                or "mpk mini" in current_name.lower()
+                or "akai" in current_name.lower()
+            ):
+                matches.append((current_name, current_vid, current_pid, {}))
+            current_name = m_name.group(1).strip()
+            current_vid = None
+            current_pid = None
+            continue
+
+        m_vid = re.search(r'"idVendor"\s*=\s*(\d+)', stripped)
+        if m_vid:
+            current_vid = int(m_vid.group(1))
+            continue
+
+        m_pid = re.search(r'"idProduct"\s*=\s*(\d+)', stripped)
+        if m_pid:
+            current_pid = int(m_pid.group(1))
+            continue
+
+    if current_name is not None and (
+        current_vid == AKAI_VID
+        or "mpk mini" in current_name.lower()
+        or "akai" in current_name.lower()
+    ):
+        matches.append((current_name, current_vid, current_pid, {}))
+
+    return matches
 
 def main() -> int:
     if sys.platform != "darwin":
@@ -70,8 +128,14 @@ def main() -> int:
             matches.append((name, vid, pid, item))
 
     if not matches:
-        print("No Akai/MPK USB device found.")
-        print("Make sure the MPK Mini 3 is connected directly over USB and powered.")
+        matches = detect_with_ioreg()
+
+    if not matches:
+        print("No Akai/MPK USB device found via system_profiler or ioreg.")
+        print()
+        print("Raw USB devices containing 'AKAI' or 'MPK' may still be useful.")
+        print("Run this and paste the output:")
+        print("  system_profiler SPUSBDataType | grep -i -A 12 -B 2 -E 'akai|mpk'")
         return 1
 
     print("Matching USB devices:")
