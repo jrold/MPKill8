@@ -92,23 +92,68 @@ def walk(node):
 
 
 def detect_target_usb() -> tuple[str, int, int] | None:
+    # First try system_profiler.
     try:
         raw = subprocess.check_output(
             ["system_profiler", "SPUSBDataType", "-xml"],
             stderr=subprocess.STDOUT,
         )
         plist = plistlib.loads(raw)
+
+        for item in walk(plist):
+            name = str(item.get("_name", ""))
+            vid = parse_hexish(item.get("vendor_id"))
+            pid = parse_hexish(item.get("product_id"))
+            if vid == AKAI_VID and pid == TARGET_PID:
+                return name or "MPK mini 3", vid, pid
+    except Exception:
+        pass
+
+    # Fallback: this is the path that successfully detected the user's MPK
+    # on macOS when system_profiler did not expose it reliably.
+    try:
+        raw = subprocess.check_output(
+            ["ioreg", "-p", "IOUSB", "-l", "-w", "0"],
+            stderr=subprocess.STDOUT,
+            text=True,
+            errors="replace",
+        )
     except Exception:
         return None
 
-    for item in walk(plist):
-        name = str(item.get("_name", ""))
-        vid = parse_hexish(item.get("vendor_id"))
-        pid = parse_hexish(item.get("product_id"))
-        if vid == AKAI_VID and pid == TARGET_PID:
-            return name or "MPK mini 3", vid, pid
+    current_name = None
+    current_vid = None
+    current_pid = None
 
-    return None
+    def maybe_match():
+        if current_vid == AKAI_VID and current_pid == TARGET_PID:
+            return current_name or "MPK mini 3", current_vid, current_pid
+        return None
+
+    for line in raw.splitlines():
+        stripped = line.strip()
+
+        m_name = re.search(r"\+-o\s+(.+?)(?:@|\s{2,}|$)", stripped)
+        if m_name:
+            found = maybe_match()
+            if found:
+                return found
+            current_name = m_name.group(1).strip()
+            current_vid = None
+            current_pid = None
+            continue
+
+        m_vid = re.search(r'"idVendor"\s*=\s*(\d+)', stripped)
+        if m_vid:
+            current_vid = int(m_vid.group(1))
+            continue
+
+        m_pid = re.search(r'"idProduct"\s*=\s*(\d+)', stripped)
+        if m_pid:
+            current_pid = int(m_pid.group(1))
+            continue
+
+    return maybe_match()
 
 
 def download_if_needed() -> None:
